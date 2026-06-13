@@ -20,16 +20,18 @@ export default function LoginPage() {
 
   const pesanError = (code) => {
     const map = {
-      'auth/user-not-found': 'Email tidak ditemukan. Silakan daftar terlebih dahulu.',
-      'auth/wrong-password': 'Password salah. Coba lagi.',
-      'auth/email-already-in-use': 'Email sudah terdaftar. Silakan masuk.',
-      'auth/weak-password': 'Password terlalu pendek. Minimal 6 karakter.',
-      'auth/invalid-email': 'Format email tidak valid.',
-      'auth/invalid-credential': 'Email atau password salah.',
-      'auth/popup-closed-by-user': 'Login Google dibatalkan.',
-      'auth/network-request-failed': 'Koneksi internet bermasalah. Coba lagi.',
+      'auth/user-not-found':        'Email tidak ditemukan. Silakan daftar terlebih dahulu.',
+      'auth/wrong-password':        'Password salah. Coba lagi.',
+      'auth/email-already-in-use':  'Email sudah terdaftar. Silakan masuk.',
+      'auth/weak-password':         'Password terlalu pendek. Minimal 6 karakter.',
+      'auth/invalid-email':         'Format email tidak valid.',
+      'auth/invalid-credential':    'Email atau password salah.',
+      'auth/popup-closed-by-user':  'Login Google dibatalkan oleh pengguna.',
+      'auth/network-request-failed':'Koneksi internet bermasalah. Coba lagi.',
+      'auth/unauthorized-domain':   '❌ Domain belum diizinkan di Firebase. Tambahkan domain ini di Firebase Console → Authentication → Settings → Authorized Domains.',
+      'auth/operation-not-allowed': 'Login Google belum diaktifkan. Aktifkan di Firebase Console → Authentication → Sign-in method.',
     };
-    return map[code] || 'Terjadi kesalahan. Silakan coba lagi.';
+    return map[code] || `Terjadi kesalahan (${code}). Silakan coba lagi.`;
   };
 
   const handleSubmit = async (e) => {
@@ -59,13 +61,18 @@ export default function LoginPage() {
     setError('');
     setLoading(true);
     try {
-      await masukDenganGoogle();
-      navigate('/dashboard');
+      const result = await masukDenganGoogle();
+      // Jika redirect mode: result = undefined (halaman akan redirect)
+      // Jika popup mode: result = UserCredential
+      if (result?.user) {
+        navigate('/dashboard');
+      }
+      // Jika redirect, biarkan onAuthStateChanged yang handle navigasi
     } catch (err) {
       setError(pesanError(err.code));
-    } finally {
       setLoading(false);
     }
+    // Tidak setLoading(false) di finally jika redirect — loading tetap tampil saat menuju Google
   };
 
   return (
