@@ -36,6 +36,32 @@ export const simpanCatatan = async ({
 };
 
 /**
+ * Simpan BANYAK catatan sekaligus dari 1 foto (multi-item detection)
+ * @param {string} userId
+ * @param {string} imageBase64 - foto bersama semua item
+ * @param {Array}  items       - [{namaSampah, jenisSampah, deskripsi, jumlah, satuan, catatan}]
+ * @returns {Promise<string[]>} array of doc IDs
+ */
+export const simpanBanyakCatatan = async (userId, imageBase64, items) => {
+  const imgThumbnail = imageBase64 ? imageBase64.substring(0, 50000) : '';
+  // Hanya simpan foto di item pertama untuk hemat kuota Firestore
+  const promises = items.map((item, idx) =>
+    addDoc(collection(db, COLLECTION_NAME), {
+      userId,
+      namaSampah: item.namaSampah,
+      jenisSampah: item.jenisSampah,
+      deskripsi: item.deskripsi || '',
+      imageBase64: idx === 0 ? imgThumbnail : '', // foto hanya di catatan pertama
+      jumlah: item.jumlah || 1,
+      satuan: item.satuan || 'kg',
+      catatan: item.catatan || '',
+      timestamp: serverTimestamp(),
+    }).then(ref => ref.id)
+  );
+  return Promise.all(promises);
+};
+
+/**
  * Berlangganan real-time ke catatan sampah milik user.
  *
  * Menggunakan onSnapshot — data langsung muncul di UI saat disimpan

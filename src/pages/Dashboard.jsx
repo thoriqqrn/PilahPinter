@@ -1,48 +1,154 @@
-// src/pages/Dashboard.jsx
-// Dashboard utama — Foto AI + Form Berat/Jumlah + DataTable Riwayat
-
+// src/pages/Dashboard.jsx — Multi-item waste detection
 import { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDropzone } from 'react-dropzone';
 import { useAuth } from '../context/AuthContext';
 import { analisaSampah, fileToBase64 } from '../services/geminiService';
-import { simpanCatatan, langgananCatatan } from '../services/firestoreService';
+import { simpanBanyakCatatan, langgananCatatan } from '../services/firestoreService';
 import RiwayatTable from '../components/RiwayatTable';
 import {
   Camera, LogOut, Leaf, RotateCcw, Save, CheckCircle,
-  AlertTriangle, TrendingUp, RefreshCw, X, Info, Scale,
-  Package, ShoppingBag, Layers, FlaskConical, Plus, Minus,
+  AlertTriangle, TrendingUp, RefreshCw, X, Info, Scale, Plus, Minus,
 } from 'lucide-react';
 
-// ─── Pilihan Satuan ────────────────────────────────────────────────────────────
+// ─── Konstanta ─────────────────────────────────────────────────────────────────
 const SATUAN_LIST = [
-  { value: 'kg',      label: 'Kilogram',  icon: '⚖️',  satuan: 'kg' },
-  { value: 'sak',     label: 'Sak',       icon: '🪣',  satuan: 'sak' },
-  { value: 'kantong', label: 'Kantong',   icon: '🛍️', satuan: 'kantong' },
-  { value: 'ikat',    label: 'Ikat',      icon: '🎀',  satuan: 'ikat' },
-  { value: 'buah',    label: 'Buah',      icon: '📦',  satuan: 'buah' },
-  { value: 'liter',   label: 'Liter',     icon: '🧴',  satuan: 'liter' },
-  { value: 'ember',   label: 'Ember',     icon: '🪣',  satuan: 'ember' },
-  { value: 'gerobak', label: 'Gerobak',   icon: '🛒',  satuan: 'gerobak' },
+  { value: 'kg',      label: 'kg',      icon: '⚖️' },
+  { value: 'sak',     label: 'Sak',     icon: '🪣' },
+  { value: 'kantong', label: 'Kantong', icon: '🛍️' },
+  { value: 'ikat',    label: 'Ikat',    icon: '🎀' },
+  { value: 'buah',    label: 'Buah',    icon: '📦' },
+  { value: 'liter',   label: 'Liter',   icon: '🧴' },
+  { value: 'ember',   label: 'Ember',   icon: '🪣' },
+  { value: 'gerobak', label: 'Gerobak', icon: '🛒' },
 ];
 
-// ─── Badge Jenis Sampah ────────────────────────────────────────────────────────
-const BadgeJenis = ({ jenis, size = 'md' }) => {
-  const config = {
-    Organik:   { bg: 'bg-green-100', border: 'border-green-400', text: 'text-green-800', icon: '🌿' },
-    Anorganik: { bg: 'bg-blue-100',  border: 'border-blue-400',  text: 'text-blue-800',  icon: '♻️' },
-    B3:        { bg: 'bg-red-100',   border: 'border-red-400',   text: 'text-red-800',   icon: '⚠️' },
-  };
-  const c = config[jenis] || config['Anorganik'];
-  const sizeClass = size === 'lg' ? 'text-xl px-5 py-2.5 font-black' : 'text-sm px-3 py-1.5 font-bold';
+const JENIS_COLOR = {
+  Organik:   { bg: 'bg-green-100', border: 'border-green-400', text: 'text-green-800', headerBg: 'bg-green-600', icon: '🌿' },
+  Anorganik: { bg: 'bg-blue-100',  border: 'border-blue-400',  text: 'text-blue-800',  headerBg: 'bg-blue-600',  icon: '♻️' },
+  B3:        { bg: 'bg-red-100',   border: 'border-red-400',   text: 'text-red-800',   headerBg: 'bg-red-600',   icon: '⚠️' },
+};
+
+const STATUS = { IDLE: 'IDLE', LOADING: 'LOADING', HASIL: 'HASIL', ERROR: 'ERROR' };
+
+// ─── Badge ────────────────────────────────────────────────────────────────────
+const BadgeJenis = ({ jenis, size = 'sm' }) => {
+  const c = JENIS_COLOR[jenis] || JENIS_COLOR.Anorganik;
   return (
-    <span className={`inline-flex items-center gap-2 ${c.bg} ${c.border} border-2 ${c.text} ${sizeClass} rounded-xl`}>
+    <span className={`inline-flex items-center gap-1 ${c.bg} ${c.border} border-2 ${c.text} ${size === 'lg' ? 'text-xl px-5 py-2 font-black' : 'text-sm px-2.5 py-1 font-bold'} rounded-xl`}>
       {c.icon} {jenis}
     </span>
   );
 };
 
-const STATUS = { IDLE: 'IDLE', LOADING: 'LOADING', HASIL: 'HASIL', ERROR: 'ERROR' };
+// ─── Item Form Card ────────────────────────────────────────────────────────────
+function ItemCard({ item, index, total, form, onChange }) {
+  const c = JENIS_COLOR[item.jenis_sampah] || JENIS_COLOR.Anorganik;
+  const satuanObj = SATUAN_LIST.find(s => s.value === form.satuan) || SATUAN_LIST[0];
+
+  const step = (delta) => {
+    const v = Math.max(0.1, (parseFloat(form.jumlah) || 0) + delta);
+    onChange({ ...form, jumlah: String(parseFloat(v.toFixed(1))) });
+  };
+
+  return (
+    <div className={`border-2 ${c.border} rounded-2xl overflow-hidden`}>
+      {/* Header item */}
+      <div className={`${c.headerBg} px-4 py-3 flex items-center justify-between`}>
+        <div className="flex items-center gap-2">
+          <span className="text-white font-black text-sm bg-white/20 px-2 py-0.5 rounded-lg">
+            Item {index + 1}/{total}
+          </span>
+          <span className="text-white font-black text-lg">{item.nama_sampah}</span>
+        </div>
+        <BadgeJenis jenis={item.jenis_sampah} size="sm" />
+      </div>
+
+      <div className={`${c.bg} p-4 space-y-3`}>
+        {/* Deskripsi AI */}
+        {item.deskripsi && (
+          <div className="flex gap-2 bg-white/70 rounded-xl p-3">
+            <Info size={16} className="text-blue-500 flex-shrink-0 mt-0.5" />
+            <p className="text-gray-700 text-sm font-semibold">{item.deskripsi}</p>
+          </div>
+        )}
+
+        {/* Pilih Satuan */}
+        <div>
+          <p className="text-gray-700 font-black text-sm mb-2">📏 Satuan</p>
+          <div className="flex flex-wrap gap-1.5">
+            {SATUAN_LIST.map(s => (
+              <button key={s.value} type="button"
+                onClick={() => onChange({ ...form, satuan: s.value })}
+                className={`px-3 py-1.5 rounded-xl text-sm font-bold border-2 transition-all ${
+                  form.satuan === s.value
+                    ? 'bg-white border-gray-700 text-gray-900 shadow-sm scale-105'
+                    : 'bg-white/60 border-gray-300 text-gray-600 hover:border-gray-500'
+                }`}
+              >
+                {s.icon} {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Input Jumlah */}
+        <div>
+          <p className="text-gray-700 font-black text-sm mb-2">🔢 Jumlah ({satuanObj.label})</p>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={() => step(form.satuan === 'kg' ? -0.5 : -1)}
+              className="w-12 h-12 bg-white rounded-xl flex items-center justify-center shadow-sm border border-gray-200 active:scale-90 transition-all"
+            >
+              <Minus size={20} className="text-gray-700" />
+            </button>
+            <div className="flex-1 relative">
+              <input
+                type="number" min="0.1" step={form.satuan === 'kg' ? '0.5' : '1'}
+                value={form.jumlah}
+                onChange={e => onChange({ ...form, jumlah: e.target.value })}
+                className="w-full text-center text-3xl font-black bg-white border-2 border-gray-200 rounded-xl py-2.5 focus:border-gray-600 focus:outline-none"
+              />
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm font-bold text-gray-400">
+                {satuanObj.value}
+              </span>
+            </div>
+            <button type="button" onClick={() => step(form.satuan === 'kg' ? 0.5 : 1)}
+              className="w-12 h-12 bg-white rounded-xl flex items-center justify-center shadow-sm border border-gray-200 active:scale-90 transition-all"
+            >
+              <Plus size={20} className="text-gray-700" />
+            </button>
+          </div>
+          {/* Quick picks */}
+          <div className="flex gap-1.5 mt-2 flex-wrap">
+            {(form.satuan === 'kg' ? [0.5, 1, 2, 5] : [1, 2, 3, 5]).map(n => (
+              <button key={n} type="button"
+                onClick={() => onChange({ ...form, jumlah: String(n) })}
+                className={`px-3 py-1 rounded-lg text-sm font-black border transition-all ${
+                  parseFloat(form.jumlah) === n
+                    ? 'bg-gray-800 border-gray-800 text-white'
+                    : 'bg-white border-gray-300 text-gray-600'
+                }`}
+              >
+                {n} {satuanObj.value}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Catatan */}
+        <div>
+          <p className="text-gray-700 font-black text-sm mb-1">📝 Catatan <span className="font-normal text-gray-400">(opsional)</span></p>
+          <input type="text" maxLength={100}
+            value={form.catatan}
+            onChange={e => onChange({ ...form, catatan: e.target.value })}
+            placeholder="Contoh: dari dapur, pasar pagi..."
+            className="w-full px-3 py-2 bg-white border-2 border-gray-200 rounded-xl text-sm font-semibold focus:border-gray-500 focus:outline-none"
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 export default function Dashboard() {
@@ -51,53 +157,50 @@ export default function Dashboard() {
 
   const [status, setStatus]       = useState(STATUS.IDLE);
   const [preview, setPreview]     = useState(null);
-  const [hasilAI, setHasilAI]     = useState(null);
+  const [imageBase64, setImageBase64] = useState('');
+  const [itemsAI, setItemsAI]     = useState([]); // array hasil AI
+  const [itemForms, setItemForms] = useState([]); // form state per item
   const [errorMsg, setErrorMsg]   = useState('');
   const [menyimpan, setMenyimpan] = useState(false);
   const [tersimpan, setTersimpan] = useState(false);
-
-  // ── State Form Berat ─────────────────────────────────────────────────────────
-  const [jumlah, setJumlah]         = useState('1');
-  const [satuan, setSatuan]         = useState('kg');
-  const [catatan, setCatatan]       = useState('');
 
   const [riwayat, setRiwayat]               = useState([]);
   const [loadingRiwayat, setLoadingRiwayat] = useState(true);
   const [errorFirestore, setErrorFirestore] = useState('');
 
-  // Real-time Firestore listener
   useEffect(() => {
     if (!user) return;
     setLoadingRiwayat(true);
-    setErrorFirestore('');
-    const unsubscribe = langgananCatatan(
+    const unsub = langgananCatatan(
       user.uid,
       (data) => { setRiwayat(data); setLoadingRiwayat(false); },
-      (err)  => { setErrorFirestore(`Gagal memuat: ${err.message}`); setLoadingRiwayat(false); }
+      (err)  => { setErrorFirestore(err.message); setLoadingRiwayat(false); }
     );
-    return () => unsubscribe();
+    return () => unsub();
   }, [user]);
 
   // ── Dropzone ─────────────────────────────────────────────────────────────────
   const onDrop = useCallback(async (acceptedFiles) => {
     const f = acceptedFiles[0];
     if (!f) return;
-    setPreview(URL.createObjectURL(f));
+    const objUrl = URL.createObjectURL(f);
+    setPreview(objUrl);
     setStatus(STATUS.LOADING);
-    setHasilAI(null);
+    setItemsAI([]);
+    setItemForms([]);
     setErrorMsg('');
     setTersimpan(false);
-    // Reset form berat ke default
-    setJumlah('1');
-    setSatuan('kg');
-    setCatatan('');
+
     try {
-      const base64 = await fileToBase64(f);
-      const hasil  = await analisaSampah(base64, f.type);
-      setHasilAI({ ...hasil, base64 });
+      const b64 = await fileToBase64(f);
+      setImageBase64(b64);
+      const items = await analisaSampah(b64, f.type);
+      setItemsAI(items);
+      // Inisialisasi form default untuk setiap item
+      setItemForms(items.map(() => ({ jumlah: '1', satuan: 'kg', catatan: '' })));
       setStatus(STATUS.HASIL);
     } catch (err) {
-      setErrorMsg(err.message || 'Gagal menganalisis foto. Coba foto ulang.');
+      setErrorMsg(err.message || 'Gagal menganalisis foto.');
       setStatus(STATUS.ERROR);
     }
   }, []);
@@ -112,46 +215,43 @@ export default function Dashboard() {
     setStatus(STATUS.IDLE);
     if (preview) URL.revokeObjectURL(preview);
     setPreview(null);
-    setHasilAI(null);
+    setImageBase64('');
+    setItemsAI([]);
+    setItemForms([]);
     setErrorMsg('');
     setTersimpan(false);
-    setJumlah('1');
-    setSatuan('kg');
-    setCatatan('');
   };
 
-  // ── Simpan ke Firestore ───────────────────────────────────────────────────────
-  const simpan = async () => {
-    if (!hasilAI || menyimpan) return;
-    const jumlahNum = parseFloat(jumlah) || 0;
-    if (jumlahNum <= 0) {
-      setErrorMsg('Jumlah/berat harus lebih dari 0');
+  const updateForm = (idx, newForm) => {
+    setItemForms(prev => prev.map((f, i) => i === idx ? newForm : f));
+  };
+
+  // ── Simpan semua item ────────────────────────────────────────────────────────
+  const simpanSemua = async () => {
+    if (menyimpan || itemsAI.length === 0) return;
+    const invalid = itemForms.findIndex(f => !(parseFloat(f.jumlah) > 0));
+    if (invalid >= 0) {
+      setErrorMsg(`Jumlah item ${invalid + 1} harus lebih dari 0`);
       return;
     }
     setMenyimpan(true);
     setErrorMsg('');
     try {
-      await simpanCatatan({
-        userId: user.uid,
-        namaSampah: hasilAI.nama_sampah,
-        jenisSampah: hasilAI.jenis_sampah,
-        deskripsi: hasilAI.deskripsi,
-        imageBase64: hasilAI.base64,
-        jumlah: jumlahNum,
-        satuan,
-        catatan: catatan.trim(),
-      });
+      const payload = itemsAI.map((item, i) => ({
+        namaSampah: item.nama_sampah,
+        jenisSampah: item.jenis_sampah,
+        deskripsi: item.deskripsi,
+        jumlah: parseFloat(itemForms[i].jumlah) || 1,
+        satuan: itemForms[i].satuan,
+        catatan: itemForms[i].catatan,
+      }));
+      await simpanBanyakCatatan(user.uid, imageBase64, payload);
       setTersimpan(true);
     } catch (err) {
       setErrorMsg(`Gagal menyimpan: ${err.message}`);
     } finally {
       setMenyimpan(false);
     }
-  };
-
-  const tambahJumlah = (delta) => {
-    const v = Math.max(0.1, (parseFloat(jumlah) || 0) + delta);
-    setJumlah(String(parseFloat(v.toFixed(1))));
   };
 
   const handleKeluar = async () => { await keluar(); navigate('/'); };
@@ -161,11 +261,9 @@ export default function Dashboard() {
     r.timestamp.getMonth() === now.getMonth() && r.timestamp.getFullYear() === now.getFullYear()
   ).length;
 
-  const satuanTerpilih = SATUAN_LIST.find(s => s.value === satuan) || SATUAN_LIST[0];
-
   return (
     <div className="min-h-screen bg-gray-50 font-['Nunito']">
-      {/* ── TOP BAR ────────────────────────────────────────────────────────── */}
+      {/* TOP BAR */}
       <header className="bg-white shadow-sm sticky top-0 z-50">
         <div className="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 min-w-0">
@@ -181,22 +279,19 @@ export default function Dashboard() {
             <TrendingUp size={20} className="text-green-600" />
             <div>
               <p className="text-xs text-gray-500 font-bold leading-none">Bulan Ini</p>
-              <p className="text-base font-black text-green-700 leading-tight">
-                {loadingRiwayat ? '...' : `${jumlahBulanIni} Catatan`}
-              </p>
+              <p className="text-base font-black text-green-700">{loadingRiwayat ? '...' : `${jumlahBulanIni} Catatan`}</p>
             </div>
           </div>
           <button id="btn-keluar" onClick={handleKeluar}
             className="flex items-center gap-2 bg-red-50 hover:bg-red-100 border-2 border-red-200 text-red-700 font-black text-base px-4 py-3 rounded-xl transition-all active:scale-95"
           >
-            <LogOut size={20} />
-            <span className="hidden sm:inline">Keluar</span>
+            <LogOut size={20} /><span className="hidden sm:inline">Keluar</span>
           </button>
         </div>
       </header>
 
       <main className="max-w-5xl mx-auto px-4 py-8 space-y-8">
-        {/* ── AREA FOTO ──────────────────────────────────────────────────────── */}
+        {/* AREA FOTO */}
         <section>
           <h2 className="text-2xl font-black text-gray-800 mb-5 flex items-center gap-3">
             <Camera size={28} className="text-green-600" />
@@ -206,23 +301,22 @@ export default function Dashboard() {
           {/* IDLE */}
           {status === STATUS.IDLE && (
             <div {...getRootProps()} id="dropzone-area"
-              className={`border-4 border-dashed rounded-3xl p-10 text-center cursor-pointer transition-all duration-300 min-h-64 flex flex-col items-center justify-center gap-5 ${
+              className={`border-4 border-dashed rounded-3xl p-10 text-center cursor-pointer transition-all min-h-64 flex flex-col items-center justify-center gap-5 ${
                 isDragActive ? 'border-green-500 bg-green-50' : 'border-green-300 bg-white hover:border-green-500 hover:bg-green-50'
               }`}
             >
               <input {...getInputProps()} />
-              <div className={`w-32 h-32 rounded-full flex items-center justify-center shadow-lg transition-all ${isDragActive ? 'bg-green-500' : 'bg-green-100'}`}>
+              <div className={`w-32 h-32 rounded-full flex items-center justify-center shadow-lg ${isDragActive ? 'bg-green-500' : 'bg-green-100'}`}>
                 <Camera size={64} className={isDragActive ? 'text-white' : 'text-green-600'} />
               </div>
               <div>
-                <p className="text-2xl font-black text-gray-800 mb-2">
-                  {isDragActive ? '📸 Lepaskan Foto di Sini!' : 'KLIK DI SINI UNTUK FOTO SAMPAH'}
+                <p className="text-2xl font-black text-gray-800 mb-1">
+                  {isDragActive ? '📸 Lepaskan Foto di Sini!' : 'KLIK UNTUK FOTO SAMPAH'}
                 </p>
-                <p className="text-lg text-gray-500 font-semibold">Atau seret dan lepas foto ke sini</p>
-                <p className="text-base text-gray-400 font-semibold mt-2">Format: JPG, PNG, WEBP</p>
+                <p className="text-base text-gray-500 font-semibold">AI bisa deteksi banyak jenis sampah sekaligus dalam 1 foto!</p>
               </div>
               <button id="btn-pilih-foto" type="button"
-                onClick={(e) => { e.stopPropagation(); open(); }}
+                onClick={e => { e.stopPropagation(); open(); }}
                 className="bg-green-600 hover:bg-green-700 active:scale-95 text-white font-black text-xl px-8 py-4 rounded-2xl shadow-lg transition-all"
               >
                 📁 Pilih dari Galeri
@@ -236,8 +330,8 @@ export default function Dashboard() {
               {preview && <img src={preview} alt="preview" className="w-36 h-36 object-cover rounded-2xl shadow-lg opacity-60" />}
               <div className="w-20 h-20 border-8 border-green-200 border-t-green-600 rounded-full animate-spin-slow" />
               <div>
-                <p className="text-2xl font-black text-gray-800 mb-2">🤖 Sedang Memeriksa Sampah...</p>
-                <p className="text-lg text-gray-500 font-semibold">Mohon Tunggu, AI sedang bekerja</p>
+                <p className="text-2xl font-black text-gray-800 mb-2">🤖 AI Memindai Semua Sampah...</p>
+                <p className="text-lg text-gray-500 font-semibold">Mendeteksi semua jenis sampah dalam foto</p>
               </div>
             </div>
           )}
@@ -256,171 +350,56 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* HASIL */}
-          {status === STATUS.HASIL && hasilAI && (
+          {/* HASIL — Multi Item */}
+          {status === STATUS.HASIL && itemsAI.length > 0 && (
             <div className="bg-white border-4 border-green-200 rounded-3xl overflow-hidden shadow-2xl">
-              {/* Header kartu */}
+              {/* Header */}
               <div className="bg-gradient-to-r from-green-600 to-emerald-600 px-6 py-4 flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <CheckCircle size={28} className="text-white" />
-                  <p className="text-xl font-black text-white">Hasil Deteksi AI</p>
+                  <div>
+                    <p className="text-xl font-black text-white">AI Menemukan {itemsAI.length} Jenis Sampah!</p>
+                    <p className="text-green-200 text-sm font-semibold">Isi jumlah masing-masing lalu simpan</p>
+                  </div>
                 </div>
-                <button id="btn-close-hasil" onClick={reset}
-                  className="w-10 h-10 bg-white/20 hover:bg-white/30 rounded-full flex items-center justify-center text-white transition-colors min-h-0"
-                >
+                <button onClick={reset} className="w-10 h-10 bg-white/20 hover:bg-white/30 rounded-full flex items-center justify-center text-white transition-colors min-h-0">
                   <X size={20} />
                 </button>
               </div>
 
               <div className="p-6 space-y-6">
-                {/* Baris atas: Foto + Info AI */}
-                <div className="flex flex-col md:flex-row gap-6">
+                {/* Foto + ringkasan badge */}
+                <div className="flex gap-4 items-start">
                   {preview && (
-                    <div className="flex-shrink-0">
-                      <img src={preview} alt="Foto sampah" className="w-full md:w-48 h-48 object-cover rounded-2xl shadow-lg" />
-                    </div>
+                    <img src={preview} alt="Foto sampah" className="w-32 h-32 object-cover rounded-2xl shadow-lg flex-shrink-0" />
                   )}
-                  <div className="flex-1 space-y-3">
-                    <div>
-                      <p className="text-gray-500 font-bold text-sm mb-0.5">Nama Sampah</p>
-                      <p className="text-3xl font-black text-gray-900">{hasilAI.nama_sampah}</p>
+                  <div>
+                    <p className="text-gray-600 font-semibold text-sm mb-2">Terdeteksi dalam foto ini:</p>
+                    <div className="flex flex-wrap gap-2">
+                      {itemsAI.map((item, i) => (
+                        <BadgeJenis key={i} jenis={item.jenis_sampah} size="sm" />
+                      ))}
                     </div>
-                    <div>
-                      <p className="text-gray-500 font-bold text-sm mb-1.5">Jenis Sampah</p>
-                      <BadgeJenis jenis={hasilAI.jenis_sampah} size="lg" />
-                    </div>
-                    {hasilAI.deskripsi && (
-                      <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 flex gap-2">
-                        <Info size={18} className="text-blue-500 flex-shrink-0 mt-0.5" />
-                        <p className="text-gray-700 font-semibold text-sm">{hasilAI.deskripsi}</p>
-                      </div>
-                    )}
+                    <p className="text-gray-500 text-sm font-semibold mt-2">
+                      {itemsAI.map(i => i.nama_sampah).join(' • ')}
+                    </p>
                   </div>
                 </div>
 
-                {/* ═══ FORM BERAT / JUMLAH ═══ */}
+                {/* Kartu per item */}
                 {!tersimpan && (
-                  <div className="bg-gray-50 border-2 border-gray-200 rounded-2xl p-5 space-y-5">
-                    <h3 className="text-xl font-black text-gray-800 flex items-center gap-2">
-                      <Scale size={22} className="text-green-600" />
-                      Isi Data Jumlah Sampah
-                    </h3>
-
-                    {/* Pilihan Satuan — tombol besar */}
-                    <div>
-                      <label className="block text-gray-700 font-black text-base mb-3">
-                        📏 Satuan Pengukuran
-                      </label>
-                      <div className="grid grid-cols-4 gap-2">
-                        {SATUAN_LIST.map((s) => (
-                          <button
-                            key={s.value}
-                            id={`btn-satuan-${s.value}`}
-                            type="button"
-                            onClick={() => setSatuan(s.value)}
-                            className={`flex flex-col items-center justify-center gap-1 py-3 px-2 rounded-xl border-2 font-bold text-sm transition-all ${
-                              satuan === s.value
-                                ? 'bg-green-600 border-green-600 text-white shadow-md scale-105'
-                                : 'bg-white border-gray-200 text-gray-600 hover:border-green-400 hover:bg-green-50'
-                            }`}
-                          >
-                            <span className="text-2xl">{s.icon}</span>
-                            <span>{s.label}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Input Jumlah dengan tombol +/- */}
-                    <div>
-                      <label className="block text-gray-700 font-black text-base mb-3" htmlFor="input-jumlah">
-                        🔢 Jumlah ({satuanTerpilih.label})
-                      </label>
-                      <div className="flex items-center gap-3">
-                        <button
-                          id="btn-kurangi-jumlah"
-                          type="button"
-                          onClick={() => tambahJumlah(satuan === 'kg' ? -0.5 : -1)}
-                          className="w-14 h-14 bg-gray-200 hover:bg-gray-300 active:scale-90 rounded-2xl flex items-center justify-center transition-all"
-                        >
-                          <Minus size={24} className="text-gray-700" />
-                        </button>
-
-                        <div className="flex-1 relative">
-                          <input
-                            id="input-jumlah"
-                            type="number"
-                            min="0.1"
-                            step={satuan === 'kg' ? '0.5' : '1'}
-                            value={jumlah}
-                            onChange={(e) => setJumlah(e.target.value)}
-                            className="w-full text-center text-4xl font-black text-gray-900 border-2 border-gray-200 focus:border-green-500 rounded-2xl py-4 focus:outline-none transition-colors"
-                          />
-                          <span className="absolute right-4 top-1/2 -translate-y-1/2 text-lg font-bold text-gray-400">
-                            {satuanTerpilih.satuan}
-                          </span>
-                        </div>
-
-                        <button
-                          id="btn-tambah-jumlah"
-                          type="button"
-                          onClick={() => tambahJumlah(satuan === 'kg' ? 0.5 : 1)}
-                          className="w-14 h-14 bg-green-100 hover:bg-green-200 active:scale-90 rounded-2xl flex items-center justify-center transition-all"
-                        >
-                          <Plus size={24} className="text-green-700" />
-                        </button>
-                      </div>
-
-                      {/* Shortcut cepat */}
-                      <div className="flex gap-2 mt-3 flex-wrap">
-                        {(satuan === 'kg'
-                          ? [0.5, 1, 2, 5, 10]
-                          : [1, 2, 3, 5, 10]
-                        ).map(n => (
-                          <button
-                            key={n}
-                            id={`btn-quick-${n}`}
-                            type="button"
-                            onClick={() => setJumlah(String(n))}
-                            className={`px-4 py-2 rounded-xl text-base font-black border-2 transition-all ${
-                              parseFloat(jumlah) === n
-                                ? 'bg-green-600 border-green-600 text-white'
-                                : 'bg-white border-gray-200 text-gray-600 hover:border-green-400'
-                            }`}
-                          >
-                            {n} {satuanTerpilih.satuan}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Catatan Tambahan */}
-                    <div>
-                      <label className="block text-gray-700 font-black text-base mb-2" htmlFor="input-catatan">
-                        📝 Catatan Tambahan <span className="font-semibold text-gray-400">(opsional)</span>
-                      </label>
-                      <textarea
-                        id="input-catatan"
-                        value={catatan}
-                        onChange={(e) => setCatatan(e.target.value)}
-                        placeholder="Contoh: dari kebun belakang, campuran daun dan ranting..."
-                        rows={2}
-                        maxLength={200}
-                        className="w-full px-4 py-3 border-2 border-gray-200 focus:border-green-500 rounded-xl text-base font-semibold text-gray-700 placeholder:text-gray-400 focus:outline-none transition-colors resize-none"
-                      />
-                      <p className="text-right text-xs text-gray-400 font-semibold mt-1">{catatan.length}/200</p>
-                    </div>
-
-                    {/* Ringkasan sebelum simpan */}
-                    <div className="bg-green-50 border border-green-200 rounded-xl p-4 flex items-center gap-3">
-                      <span className="text-3xl">{satuanTerpilih.icon}</span>
-                      <div>
-                        <p className="text-sm text-gray-500 font-semibold">Yang akan disimpan:</p>
-                        <p className="text-xl font-black text-gray-800">
-                          {jumlah || '0'} {satuanTerpilih.satuan} {hasilAI.nama_sampah}
-                          <BadgeJenis jenis={hasilAI.jenis_sampah} size="md" />
-                        </p>
-                      </div>
+                  <>
+                    <div className="space-y-4">
+                      {itemsAI.map((item, idx) => (
+                        <ItemCard
+                          key={idx}
+                          item={item}
+                          index={idx}
+                          total={itemsAI.length}
+                          form={itemForms[idx] || { jumlah: '1', satuan: 'kg', catatan: '' }}
+                          onChange={(newForm) => updateForm(idx, newForm)}
+                        />
+                      ))}
                     </div>
 
                     {errorMsg && (
@@ -430,33 +409,57 @@ export default function Dashboard() {
                       </div>
                     )}
 
-                    {/* Tombol Aksi */}
-                    <div className="flex gap-3 flex-wrap pt-1">
-                      <button id="btn-simpan-catatan" onClick={simpan} disabled={menyimpan}
+                    {/* Ringkasan total */}
+                    <div className="bg-green-50 border-2 border-green-200 rounded-2xl p-4">
+                      <p className="font-black text-gray-700 mb-2">📋 Ringkasan Simpanan ({itemsAI.length} catatan):</p>
+                      <div className="space-y-1">
+                        {itemsAI.map((item, i) => {
+                          const f = itemForms[i] || {};
+                          const s = SATUAN_LIST.find(s => s.value === f.satuan) || SATUAN_LIST[0];
+                          return (
+                            <div key={i} className="flex items-center gap-2 text-sm">
+                              <span>{JENIS_COLOR[item.jenis_sampah]?.icon}</span>
+                              <span className="font-bold text-gray-800">{item.nama_sampah}</span>
+                              <span className="text-gray-500">—</span>
+                              <span className="font-black text-green-700">{f.jumlah || 0} {s.value}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="flex gap-3">
+                      <button id="btn-simpan-semua" onClick={simpanSemua} disabled={menyimpan}
                         className="flex-1 inline-flex items-center justify-center gap-3 bg-green-600 hover:bg-green-700 disabled:bg-green-300 active:scale-95 text-white font-black text-xl px-6 py-5 rounded-2xl transition-all shadow-lg"
                       >
                         {menyimpan
-                          ? <><RefreshCw size={22} className="animate-spin" /> Menyimpan...</>
-                          : <><Save size={22} /> Simpan Catatan</>
+                          ? <><RefreshCw size={22} className="animate-spin" /> Menyimpan {itemsAI.length} Item...</>
+                          : <><Save size={22} /> Simpan {itemsAI.length} Catatan Sekaligus</>
                         }
                       </button>
                       <button id="btn-foto-ulang" onClick={reset}
-                        className="inline-flex items-center justify-center gap-3 bg-gray-200 hover:bg-gray-300 active:scale-95 text-gray-700 font-black text-xl px-6 py-5 rounded-2xl transition-all"
+                        className="inline-flex items-center justify-center gap-2 bg-gray-200 hover:bg-gray-300 active:scale-95 text-gray-700 font-black text-lg px-5 py-5 rounded-2xl transition-all"
                       >
-                        <RotateCcw size={22} /> Foto Ulang
+                        <RotateCcw size={20} /> Foto Ulang
                       </button>
                     </div>
-                  </div>
+                  </>
                 )}
 
-                {/* Sukses tersimpan */}
+                {/* Sukses */}
                 {tersimpan && (
                   <div className="bg-green-50 border-2 border-green-300 rounded-2xl p-8 text-center">
                     <CheckCircle size={56} className="text-green-600 mx-auto mb-3" />
-                    <p className="text-green-700 font-black text-2xl mb-1">Catatan Berhasil Disimpan! ✅</p>
-                    <p className="text-green-600 font-semibold text-lg mb-6">
-                      {jumlah} {satuanTerpilih.satuan} {hasilAI.nama_sampah} telah tercatat
+                    <p className="text-green-700 font-black text-2xl mb-2">
+                      {itemsAI.length} Catatan Berhasil Disimpan! ✅
                     </p>
+                    <div className="flex flex-wrap justify-center gap-2 mb-5">
+                      {itemsAI.map((item, i) => (
+                        <span key={i} className="bg-white border border-green-200 px-3 py-1 rounded-xl text-sm font-bold text-gray-700">
+                          {JENIS_COLOR[item.jenis_sampah]?.icon} {item.nama_sampah} — {itemForms[i]?.jumlah} {itemForms[i]?.satuan}
+                        </span>
+                      ))}
+                    </div>
                     <button id="btn-foto-lagi" onClick={reset}
                       className="inline-flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white font-black text-xl px-8 py-4 rounded-2xl transition-all active:scale-95 shadow-lg"
                     >
@@ -469,32 +472,25 @@ export default function Dashboard() {
           )}
         </section>
 
-        {/* ── RIWAYAT CATATAN — DataTable ──────────────────────────────────── */}
+        {/* RIWAYAT */}
         <section>
-          <div className="flex items-center justify-between mb-5">
-            <div>
-              <h2 className="text-2xl font-black text-gray-800">📋 Riwayat Catatan</h2>
-              <p className="text-sm text-green-600 font-semibold mt-0.5 flex items-center gap-1">
-                <span className="w-2 h-2 bg-green-500 rounded-full inline-block animate-pulse" />
-                Sinkronisasi real-time
-              </p>
-            </div>
+          <div className="mb-5">
+            <h2 className="text-2xl font-black text-gray-800">📋 Riwayat Catatan</h2>
+            <p className="text-sm text-green-600 font-semibold mt-0.5 flex items-center gap-1">
+              <span className="w-2 h-2 bg-green-500 rounded-full inline-block animate-pulse" />
+              Sinkronisasi real-time
+            </p>
           </div>
-
           {errorFirestore && (
             <div className="bg-red-50 border-2 border-red-300 rounded-2xl p-4 mb-4 flex gap-3">
               <AlertTriangle size={20} className="text-red-500 flex-shrink-0" />
               <p className="text-red-700 font-bold text-sm">{errorFirestore}</p>
             </div>
           )}
-
-          {loadingRiwayat ? (
-            <div className="space-y-3">
-              {[1, 2, 3].map(i => <div key={i} className="skeleton h-16 rounded-2xl" />)}
-            </div>
-          ) : (
-            <RiwayatTable data={riwayat} />
-          )}
+          {loadingRiwayat
+            ? <div className="space-y-3">{[1,2,3].map(i => <div key={i} className="skeleton h-16 rounded-2xl" />)}</div>
+            : <RiwayatTable data={riwayat} />
+          }
         </section>
       </main>
     </div>
