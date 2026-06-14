@@ -25,22 +25,29 @@ export const fileToBase64 = (file) =>
  * @returns {Promise<Array<{nama_sampah: string, jenis_sampah: string, deskripsi: string}>>}
  */
 export const analisaSampah = async (imageBase64, mimeType = 'image/jpeg') => {
-  const prompt = `Kamu adalah sistem AI ahli identifikasi dan pemilahan sampah.
-Analisis foto ini secara teliti. Identifikasi SEMUA objek sampah yang terlihat, bahkan jika ada beberapa jenis berbeda dalam satu foto.
+  // Prompt 2-fase: SCAN semua dulu → KATEGORIKAN
+  // Kunci: paksa model listing semua objek fisik terpisah sebelum assign jenis
+  const prompt = `TUGAS: Identifikasi dan kategorikan SEMUA sampah dalam foto ini.
 
-Jawab HANYA dengan JSON array (tanpa markdown, tanpa komentar):
-[
-  {"nama_sampah":"nama spesifik item 1","jenis_sampah":"Organik atau Anorganik atau B3","deskripsi":"tips pilah singkat"},
-  {"nama_sampah":"nama spesifik item 2","jenis_sampah":"Organik atau Anorganik atau B3","deskripsi":"tips pilah singkat"}
-]
+LANGKAH 1 — SCAN TOTAL:
+Perhatikan SETIAP sudut foto. Daftarkan semua benda fisik berbeda yang kamu lihat.
+Jangan lewatkan apapun meskipun kecil atau tidak jelas.
+Contoh benda: botol plastik, daun kering, tisu, kaleng, kantong plastik, sisa makanan, kertas, ranting, dll.
 
-Aturan:
-- Organik: sisa makanan, daun, kulit buah, kayu, kertas polos
-- Anorganik: plastik, kaca, logam, karet, styrofoam, kertas berlapis
-- B3: baterai, elektronik, oli, lampu neon, obat kadaluarsa, cairan kimia
-- Jika ada 3 botol plastik → cukup 1 entri "Botol Plastik"
-- Jika ada jenis berbeda (mis. botol + sisa nasi) → 2 entri terpisah
-- Minimal 1 entri, maksimal 8 entri`;
+LANGKAH 2 — KATEGORIKAN:
+Untuk setiap benda yang berbeda JENIS MATERINYA, buat entri terpisah:
+- Organik  = daun, ranting, sisa makanan, kulit buah, kertas tidak dilapisi
+- Anorganik = plastik, kaca, logam, styrofoam, karet, kertas berlapis/glossy
+- B3        = baterai, elektronik, cat, oli, obat, bahan kimia
+
+ATURAN PENTING:
+* Benda berbeda jenis material = ENTRI TERPISAH (botol plastik + daun = 2 entri)
+* Benda sama jenis material = 1 entri mewakili semua (3 botol = 1 entri "Botol Plastik")
+* Minimum deteksi: periksa apakah ada benda organik DAN anorganik — jika ya, keduanya WAJIB masuk
+* Jangan hanya fokus ke benda paling dominan
+
+OUTPUT: Hanya JSON array, tanpa markdown, tanpa penjelasan:
+[{"nama_sampah":"<nama spesifik>","jenis_sampah":"Organik|Anorganik|B3","deskripsi":"<tips pilah 1 kalimat>"}]`;
 
   const requestBody = {
     contents: [{
@@ -50,10 +57,13 @@ Aturan:
       ],
     }],
     generationConfig: {
-      temperature: 0.1,
+      // temperature 0.4: lebih eksploratif saat mendeteksi banyak objek
+      temperature: 0.4,
       maxOutputTokens: 1024,
       responseMimeType: 'application/json',
-      thinkingConfig: { thinkingBudget: 0 },
+      // Budget 1024 token thinking: beri ruang model untuk scan & reasoning
+      // sebelum output JSON — jauh lebih akurat untuk multi-item detection
+      thinkingConfig: { thinkingBudget: 1024 },
     },
   };
 
